@@ -1,0 +1,39 @@
+input { pipeline { address => "cleafy-queue" } }
+filter {
+  grok {
+    pattern_definitions => {
+      "KAFKALOGV1" => "(?m)%{TIMESTAMP_ISO8601:timestamp}. %{LOGLEVEL:[log][level]} +%{JAVALOGMESSAGE:message} \(%{JAVACLASS:[kafka][log][class]}\)$[ \n]*(?<kafka.log.trace.full>.*)"
+      "KAFKALOGV2" => "(?m)\[%{TIMESTAMP_ISO8601:timestamp}\] \[%{LOGLEVEL:[log][level]} ?\] \[%{NOTSPACE:[kafka][log][thread]}\] \[%{NOTSPACE:[kafka][log][class]}\] \- %{GREEDYDATA:message}"
+    }
+    match => {
+      "message" => [ "%{KAFKALOGV1}", "%{KAFKALOGV2}"
+      ]
+    }
+    overwrite => [ "message" ]
+  }
+
+  grok {
+    pattern_definitions => {
+      "KAFKA_COMPONENT" => "[^\]]*"
+    }
+    match => {
+      "message" => "\[%{KAFKA_COMPONENT:[kafka][log][component]}\][,:.]? +%{JAVALOGMESSAGE:message}"
+    }
+    overwrite => ["message"]
+    # The Kafka component may be absent -> don't add _grokparsefailure if it's not found
+    tag_on_failure => []
+  }
+
+  date {
+    match => [ "timestamp", "yyyy-MM-dd HH:mm:ss,SSS" ]
+    timezone => "UTC"
+    remove_field => [ "timestamp" ]
+  }
+
+  mutate {
+    add_field => {
+      "[labels][log_type]" => "cleafy-queue"
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }

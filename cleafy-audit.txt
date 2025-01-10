@@ -1,0 +1,43 @@
+input { pipeline { address => "cleafy-audit" } }
+filter {
+  grok {
+    pattern_definitions => {
+      "AUDITUSER" => "%{WORD} \(%{DATA:[user][name]}\)|%{DATA:[user][name]}"
+    }
+    match => { 
+      "message" => [
+        "\[%{DATA:[cleafy][module]}\]%{SPACE}%{LOGLEVEL:[log][level]}%{SPACE}\[%{DATA:timestamp}\] \[%{DATA:[cleafy][threadmarker]}\] - %{AUDITUSER} \| %{DATA:[cleafy][operation]} \| %{GREEDYDATA:message}"
+      ]
+    }
+    overwrite => [ "message" ]
+  }
+
+  date {
+    match => [ "timestamp", "yyyy-MM-dd HH:mm:ss.SSS" ]
+    timezone => "UTC"
+    remove_field => [ "timestamp" ]
+  }
+
+  if [log][file][path] =~ /api\.audit\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-api-audit"
+      }
+    }
+  }
+  else if [log][file][path] =~ /engine\.audit\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-engine-audit"
+      }
+    }
+  }
+  else if [log][file][path] =~ /scheduler\.audit\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-scheduler-audit"
+      }
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }

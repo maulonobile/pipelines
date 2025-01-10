@@ -1,0 +1,50 @@
+input { pipeline { address => "cleafy-console" } }
+filter {
+  if [message] =~ /^(ts=|time=)/ {
+    drop { }
+  }
+
+  grok {
+    pattern_definitions => {
+      "COMMONAPACHELOG" => "%{IPORHOST:[source][address]} - %{DATA:[user][name]} \[%{HTTPDATE:timestamp}\] \"(?:%{WORD:[http][request][method]} %{DATA:[url][original]} HTTP/%{NUMBER:[http][version]}|-)\" %{NUMBER:[http][response][status_code]:long} (?:%{NUMBER:[http][response][body][bytes]:long}|-)"
+      "COMBINEDAPACHELOG" => "%{COMMONAPACHELOG} \"%{DATA:[http][request][referrer]}\" \"%{DATA:[user_agent][original]}\""
+      "HTTPD24_ERRORLOG" => "\[%{HTTPDERROR_DATE:timestamp}\] \[%{DATA:[apache][error][module]}:%{LOGLEVEL:[log][level]}\] \[pid %{NUMBER:[process][pid]:long}(:tid %{NUMBER:[process][thread][id]:long})?\]( \[client %{IPORHOST:[source][address]}(:%{POSINT:[source][port]:long})?\])? %{GREEDYDATA:message}"
+    }
+    match => { 
+      "message" => ["%{COMBINEDAPACHELOG}", "%{HTTPD24_ERRORLOG}"]
+    }
+    overwrite => [ "message" ]
+  }
+
+  if [http] {
+    mutate {
+      remove_field => [ "message" ]
+    }
+  }
+
+  date {
+    match => [ 
+      "timestamp",
+      "dd/MMM/yyyy:HH:mm:ss Z",
+      "EEE MMM dd HH:mm:ss yyyy",
+      "EEE MMM dd HH:mm:ss.SSSSSS yyyy"
+    ]
+    timezone => "UTC"
+    remove_field => [ "timestamp" ]
+  }
+
+  if [http] {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-console-access"
+      }
+    }
+  } else {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-console-error"
+      }
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }

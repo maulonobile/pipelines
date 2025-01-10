@@ -1,0 +1,54 @@
+input { pipeline { address => "cleafy-core" } }
+filter {
+  grok {
+    pattern_definitions => {
+      "GREEDYMULTILINE" => "(.|\n)*"
+      "CLEAFYLOG" => "%{LOGLEVEL:[log][level]}%{SPACE}\[%{DATA:timestamp}\]%{SPACE}\[%{DATA:[cleafy][threadmarker]}\]%{SPACE}%{DATA:[cleafy][class]}%{SPACE}-%{SPACE}%{GREEDYMULTILINE:message}"
+    }
+    match => { 
+      "message" => [
+        # File log
+        "%{CLEAFYLOG}",
+        # Console log starting with component name, e.g. [INGESTION]
+        "\[[^\]]+\] %{CLEAFYLOG}"
+      ]
+    }
+    overwrite => [ "message" ]
+  }
+
+  date {
+    match => [ "timestamp", "yyyy-MM-dd HH:mm:ss.SSS" ]
+    timezone => "UTC"
+    remove_field => [ "timestamp" ]
+  }
+
+  if [log][file][path] =~ /api\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-api"
+      }
+    }
+  }
+  else if [log][file][path] =~ /engine\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-engine"
+      }
+    }
+  }
+  else if [log][file][path] =~ /scheduler\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-scheduler"
+      }
+    }
+  }
+  else if [log][file][path] =~ /cleafy-ingestion\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-ingestion"
+      }
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }

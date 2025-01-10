@@ -1,0 +1,2 @@
+input { pipeline { address => "cleafy-tty" } }
+output { pipeline { send_to => "beats-output-elasticsearch" } }

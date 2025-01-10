@@ -1,0 +1,35 @@
+input { pipeline { address => "cleafy-delete-expired-docs" } }
+filter {
+  grok {
+    pattern_definitions => {
+      "GREEDYMULTILINE" => "(.|\n)*"
+    }
+    match => { 
+      "message" => [
+        "\[%{DATA:timestamp}\]\[%{LOGLEVEL:[log][level]}\]%{SPACE}%{GREEDYMULTILINE:message}"
+      ]
+    }
+    overwrite => [ "message" ]
+  }
+
+  date {
+    match => [ "timestamp", "dd/MM/yy HH:mm:ss ZZZ" ]
+    remove_field => [ "timestamp" ]
+  }
+
+  if [log][file][path] =~ /delete-expired-docs\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-delete-expired-docs"
+      }
+    }
+  }
+  else if [log][file][path] =~ /optimizer\.log$/ {
+    mutate {
+      add_field => {
+        "[labels][log_type]" => "cleafy-optimizer"
+      }
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }

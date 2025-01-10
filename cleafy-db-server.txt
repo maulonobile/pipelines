@@ -1,0 +1,78 @@
+input { pipeline { address => "cleafy-db-server" } }
+filter {
+  grok {
+    pattern_definitions => {
+      "GREEDYMULTILINE" => "(.|\n)*"
+      "INDEXNAME" => "[a-zA-Z0-9_.-]*"
+      "GC_ALL" => "\[gc\]\[%{NUMBER:[elasticsearch][server][gc][overhead_seq]}\] overhead, spent \[%{NUMBER:[elasticsearch][server][gc][collection_duration][time]:float}%{DATA:[elasticsearch][server][gc][collection_duration][unit]}\] collecting in the last \[%{NUMBER:[elasticsearch][server][gc][observation_duration][time]:float}%{DATA:[elasticsearch][server][gc][observation_duration][unit]}\]"
+      "GC_YOUNG" => "\[gc\]\[young\]\[%{NUMBER:[elasticsearch][server][gc][young][one]}\]\[%{NUMBER:[elasticsearch][server][gc][young][two]}\]%{SPACE}%{GREEDYMULTILINE:message}"
+      "LOG_HEADER" => "\[%{DATA:[elasticsearch][server][timestamp]}\]\[%{LOGLEVEL:[log][level]}%{SPACE}?\]\[%{DATA:[elasticsearch][server][component]}%{SPACE}\](%{SPACE})?(\[%{DATA:[elasticsearch][node][name]}\])?(%{SPACE})?"
+    }
+    match => { 
+      "message" => [
+        "%{LOG_HEADER}%{GC_ALL}",
+        "%{LOG_HEADER}%{GC_YOUNG}",
+        "%{LOG_HEADER}%{SPACE}((\[%{INDEXNAME:[elasticsearch][index][name]}\]|\[%{INDEXNAME:[elasticsearch][index][name]}\/%{DATA:[elasticsearch][index][id]}\]))?%{SPACE}%{GREEDYMULTILINE:message}"
+      ]
+    }
+    overwrite => [ "message" ]
+  }
+
+  # Convert garbage collection time to milliseconds (standard)
+  ruby {
+    code => '
+      def convert_to_ms(time, unit)
+        case unit
+        when "s"
+          time * 1000
+        when "ms"
+          time
+        when "m"
+          time * 60000
+        end
+      end
+
+      event.get("[elasticsearch][server][gc]").tap do |gc|
+        next unless gc.is_a?(Hash)
+        
+        if gc["observation_duration"]
+          time = gc.dig("observation_duration", "time")
+          unit = gc.dig("observation_duration", "unit")
+          if time && unit
+            gc["observation_duration"]["ms"] = convert_to_ms(time.to_f, unit)
+          end
+        end
+
+        if gc["collection_duration"]
+          time = gc.dig("collection_duration", "time")
+          unit = gc.dig("collection_duration", "unit")
+          if time && unit
+            gc["collection_duration"]["ms"] = convert_to_ms(time.to_f, unit)
+          end
+        end
+      end
+    '
+  }
+
+  mutate {
+    remove_field => [
+      "[elasticsearch][server][gc][collection_duration][time]",
+      "[elasticsearch][server][gc][collection_duration][unit]",
+      "[elasticsearch][server][gc][observation_duration][time]",
+      "[elasticsearch][server][gc][observation_duration][unit]"
+    ]
+  }
+
+  date {
+    match => [ "[elasticsearch][server][timestamp]", "ISO8601", "yyyy-MM-dd HH:mm:ss,SSS" ]
+    timezone => "UTC"
+    remove_field => [ "[elasticsearch][server][timestamp]" ]
+  }
+
+  mutate {
+    add_field => {
+      "[labels][log_type]" => "cleafy-db-server"
+    }
+  }
+}
+output { pipeline { send_to => "beats-output-elasticsearch" } }
